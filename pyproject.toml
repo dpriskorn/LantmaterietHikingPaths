@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "lantmaterietdataextraction"
+version = "0.1.0"
+description = "Scripts to extract hiking paths and other data from Lantmäteriet Topo 50 vector data"
+authors = ["Dennis Priskorn <you@example.com>"]
+license = "GPLv3+"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+geopandas = "^0.13.2"
+fiona = "^1.9.4.post1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
