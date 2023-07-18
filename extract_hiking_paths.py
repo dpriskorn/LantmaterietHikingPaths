@@ -1,3 +1,4 @@
+#!/bin/python
 import argparse
 import geopandas as gpd
 from pyproj import CRS
@@ -6,22 +7,22 @@ from pyproj import CRS
 parser = argparse.ArgumentParser(description="Convert GeoPackage coordinates from SWEREF99TM to WGS84 and export to GeoJSON")
 
 # Add the input and output file arguments
-parser.add_argument("input_file", help="Path to the input GeoPackage file")
-parser.add_argument("output_file", help="Path to the output GeoJSON file")
+parser.add_argument("-i", "--input", help="Path to the input GeoPackage file")
+parser.add_argument("-o", "--output", help="Path to the output GeoJSON file")
 
 # Parse the command-line arguments
 args = parser.parse_args()
 
 # Input and output file paths
-input_gpkg = args.input_file
-output_geojson = args.output_file
+input_gpkg = args.input
+output_geojson = args.output
 
 print("Reading gpkg")
 
 layer_name = "ovrig_vag"
 
 # Read the GeoPackage into a GeoDataFrame
-gdf = gpd.read_file(gpkg, layer=layer_name)
+gdf = gpd.read_file(input_gpkg, layer=layer_name)
 
 # Filter the GeoDataFrame based on the "objekttypnr" attribute
 filtered_gdf = gdf[gdf["objekttypnr"] == 1846]
