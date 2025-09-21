@@ -60,14 +60,17 @@ class HikingPipeline(BaseModel):
         # minus discontinued hiking paths
         # only swedish paths
         # only those with osm id
+        # only those with length and start with the shortest
         self.sparql_result = execute_sparql_query(
             f"""
-            SELECT DISTINCT ?item ?osm WHERE {{
+            SELECT DISTINCT ?item ?osm ?length WHERE {{
               ?item wdt:P6104 wd:Q119978050;
                     wdt:P17 wd:Q34;
-                    wdt:P402 ?osm.
+                    wdt:P402 ?osm;
+                    wdt:P2043 ?length.
               MINUS {{ ?item wdt:P31 wd:Q116787033 }}
             }}
+            ORDER BY ASC(?length)
             """
         )
 
@@ -84,10 +87,11 @@ class HikingPipeline(BaseModel):
             for binding in self.sparql_result["results"]["bindings"]:
                 # pprint(binding)
                 qid = self.__extract_wcdqs_json_entity_id__(data=binding)
-                # Extract last_update if present
                 osm_relation_id = binding.get("osm", {}).get("value")
                 logger.debug(f"got osm relation id: {osm_relation_id}")
-                trail_item = Trail(wikidata_qid=qid, osm_relation_id=osm_relation_id)
+                length = binding.get("length", {}).get("value")
+                logger.debug(f"got length: {length} km")
+                trail_item = Trail(wikidata_qid=qid, osm_relation_id=osm_relation_id, length=length)
                 # pprint(trail_item)
                 # input("press enter to cont")
                 self.trails.append(trail_item)
@@ -97,7 +101,7 @@ class HikingPipeline(BaseModel):
     # Process a single trail
     # ------------------------------
     def process_trail(self, trail: Trail, sample_distance: float = 25.0):
-        print(f"Processing trail ({trail.wikidata_qid}, {trail.wikidata_url})...")
+        print(f"Processing trail ({trail.wikidata_qid}, {trail.length} km, {trail.wikidata_url})...")
 
         # 1) hämta geometri från OSM
         if trail.geometry is None:
