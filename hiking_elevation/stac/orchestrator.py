@@ -1,25 +1,23 @@
+import json
 import logging
 from pathlib import Path
-import json
-import requests
 from typing import List
+
+import requests
 from pydantic import BaseModel
 from requests.auth import HTTPBasicAuth
-from pathlib import Path
-import json
-import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
+from tqdm import tqdm
 
 import config
 from hiking_elevation.stac.collection import STACCollection
-from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path("data/stac_cache")
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 SAVE_DIR = Path("data/dem")
 SAVE_DIR.mkdir(exist_ok=True, parents=True)
-
-logger = logging.getLogger(__name__)
 
 
 class STACOrchestrator(BaseModel):
@@ -103,20 +101,51 @@ class STACOrchestrator(BaseModel):
         return features
 
     @staticmethod
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=30))
     def download_dem_tile(url: str) -> Path:
+        """
+        Download a DEM tile from Lantmäteriet with retries, caching, and size verification.
+        """
         local_file = SAVE_DIR / url.split("/")[-1]
-        if local_file.exists():
+
+        # Skip if already exists and non-zero
+        if local_file.exists() and local_file.stat().st_size > 0:
             return local_file
 
-        # Streamed download with progress
-        # Login to lantmäteriet to avoid 401 errors
+        logger.info(f"Downloading {url} -> {local_file}")
         resp = requests.get(url, auth=HTTPBasicAuth(config.username, config.password), stream=True)
         resp.raise_for_status()
+
         total = int(resp.headers.get("Content-Length", 0))
-        with open(local_file, "wb") as f, tqdm(total=total, unit="B", unit_scale=True, desc=local_file.name) as pbar:
+        if total == 0:
+            raise ValueError(f"Remote file appears empty: {url}")
+
+        # Stream download with progress
+        with open(local_file, "wb") as f, tqdm(total=total, unit="B", unit_scale=True,
+                                               desc=local_file.name) as pbar:
             for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-                pbar.update(len(chunk))
+                if chunk:
+                    f.write(chunk)
+                    pbar.update(len(chunk))
+
+        # Verify file size
+        actual_size = local_file.stat().st_size
+        if total != actual_size:
+            logger.warning(f"Incomplete download: {local_file} (expected {total}, got {actual_size})")
+            local_file.unlink(missing_ok=True)
+            raise IOError(f"Incomplete download for {url}")
+
+        # Optionally, quick check if file is a valid TIFF
+        try:
+            with open(local_file, "rb") as f:
+                header = f.read(4)
+                if header not in [b"II*\x00", b"MM\x00*"]:
+                    raise ValueError(f"{local_file} is not a valid TIFF file")
+        except Exception as e:
+            logger.error(f"File validation failed for {local_file}: {e}")
+            local_file.unlink(missing_ok=True)
+            raise
+
         return local_file
 
     def get_dem_tiles_for_bbox(self, bbox: list) -> List[Path]:
