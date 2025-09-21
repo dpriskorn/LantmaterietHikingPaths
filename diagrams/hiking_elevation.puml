@@ -1,0 +1,27 @@
+@startuml
+title Hiking Elevation Pipeline
+
+actor User
+
+entity "Wikidata" as WD
+entity "OSM (Overpass API)" as OSM
+entity "Lantmäteriet STAC API" as DEM
+entity "Python App" as App
+database "Local DEM Storage" as Storage
+
+User -> App: Start process (QIDs)
+App -> WD: Fetch OSM relation ID
+WD --> App: Return relation ID
+
+App -> OSM: Fetch trail geometry
+OSM --> App: Return LineString
+
+App -> DEM: Fetch DEM tiles
+DEM --> Storage: Save GeoTIFF files
+Storage --> App: Load DEM raster
+
+App -> App: Sample elevation along LineString
+App -> App: Compute ascent/descent
+App --> User: Return profile (ascent/descent)
+
+@enduml

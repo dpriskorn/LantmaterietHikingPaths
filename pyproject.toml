@@ -1,16 +1,43 @@
 [tool.poetry]
-name = "lantmaterietdataextraction"
+name = "lantmateriet-hiking-paths"
 version = "0.1.0"
-description = "Scripts to extract hiking paths and other data from Lantmäteriet Topo 50 vector data"
-authors = ["Dennis Priskorn <you@example.com>"]
+description = "Scripts to extract hiking paths and other data from Lantmäteriet"
+# authors = []
 license = "GPLv3+"
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-geopandas = "^0.13.2"
-fiona = "^1.9.4.post1"
 
+# HTTP requests
+requests = "^2.31"
+
+# Overpass API wrapper
+overpy = "^0.7"
+
+# Geometrihantering
+shapely = "^2.0"
+
+# Rasterhantering (DEM)
+rasterio = "^1.4"
+
+# Data modelling & validation
+pydantic = "^2.3"
+
+# JSON, typning etc.
+numpy = "^2.3.3"
+
+# topografi 50 extraction
+#geopandas = "^0.13.2"
+#fiona = "^1.9.4.post1"
+tqdm = "^4.67.1"
+wikibaseintegrator = "^0.12.14"
+tenacity = "^9.1.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4"
+black = "^23.12"
+isort = "^6.0"
 
 [build-system]
 requires = ["poetry-core"]
