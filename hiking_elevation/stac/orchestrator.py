@@ -120,16 +120,35 @@ class STACOrchestrator(BaseModel):
         return local_file
 
     def get_dem_tiles_for_bbox(self, bbox: list) -> List[Path]:
+        """
+        Returnerar lokala Path till DEM-tiles som intersectar trailens bbox.
+        Laddar ner nya tiles om de inte finns.
+        """
         dem_paths = []
         for c in self.collections:
+            # skip collections that don't touch bbox at all
             if not self.collection_intersects_bbox(c, bbox):
                 continue
+
+            # get all features for this collection
             features = self.get_features_for_collection(c.id)
             for feat in features:
+                feat_bbox = feat.get("bbox")
+                if not feat_bbox:
+                    continue
+                minfx, minfy, maxfx, maxfy = feat_bbox
+                minx, miny, maxx, maxy = bbox
+
+                # skip if this feature does NOT intersect trail bbox
+                if maxx < minfx or minx > maxfx or maxy < minfy or miny > maxfy:
+                    continue
+
+                # get DEM asset
                 assets = feat.get("assets", {})
                 data_asset = assets.get("data")
                 if data_asset and data_asset.get("type", "").startswith("image/tiff"):
                     url = data_asset["href"]
                     local_file = self.download_dem_tile(url)
                     dem_paths.append(local_file)
+
         return dem_paths
