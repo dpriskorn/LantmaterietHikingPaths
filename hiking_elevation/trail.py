@@ -23,6 +23,7 @@ class Trail(BaseModel):
     elevations: list[float] = Field(default_factory=list, description="Elevation samples along trail")
     ascent: float = Field(0.0, description="Total ascent in meters")
     descent: float = Field(0.0, description="Total descent in meters")
+    length: float = Field(0.0, description="Total length in km")
 
     # internt API-klient
     _api: overpy.Overpass = PrivateAttr(default_factory=overpy.Overpass)
@@ -57,9 +58,11 @@ class Trail(BaseModel):
 
     # Privat metod för ascent/descent
     def _compute_ascent_descent(self):
+        logger.debug("_compute_ascent_descent: running")
         diffs = np.diff(self.elevations)
         self.ascent = float(diffs[diffs > 0].sum())
         self.descent = float(-diffs[diffs < 0].sum())
+        print(f"Calculated ascent: {self.ascent}m, descent: {self.descent}m")
 
     def fetch_geometry(self) -> None:
         """
