@@ -69,6 +69,8 @@ class HikingPipeline(BaseModel):
                     wdt:P402 ?osm;
                     wdt:P2043 ?length.
               MINUS {{ ?item wdt:P31 wd:Q116787033 }}
+              # filter for length between 5 and 10 km
+              FILTER(?length > 10 && ?length < 25)              
             }}
             ORDER BY ASC(?length)
             """
@@ -113,16 +115,16 @@ class HikingPipeline(BaseModel):
         dem_tiles = self.orchestrator.get_dem_tiles_for_bbox(bbox)
 
         if not dem_tiles:
-            print(f"Inga DEM tiles hittades för {trail.name}")
+            print(f"Inga DEM tiles hittades för {trail.wikidata_url}")
             return
 
         # 3) beräkna elevations, ascent/descent
         trail.sample_elevations(dem_tiles, sample_distance)
 
         # 4) ladda upp resultat till Wikidata
-        self.upload_to_wikidata(trail)
+        # self.upload_to_wikidata(trail)
 
-        print(f"Done: Ascent={trail.ascent:.1f} m, Descent={trail.descent:.1f} m")
+        # print(f"Done: Ascent={trail.ascent:.1f} m, Descent={trail.descent:.1f} m")
 
     # ------------------------------
     # Run pipeline
