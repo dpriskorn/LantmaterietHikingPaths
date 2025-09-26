@@ -1,5 +1,8 @@
+import csv
 import logging
+import time
 from pathlib import Path
+from typing import Set
 
 from pydantic import BaseModel
 from wikibaseintegrator import wbi_config  # type: ignore
@@ -29,6 +32,7 @@ class HikingPipeline(BaseModel):
     orchestrator: STACOrchestrator | None = None
     sparql_result: dict = dict()
     rdf_entity_prefix: str = "http://www.wikidata.org/entity/"
+    processed_qids: Set[str] = set()
 
     class Config:
         arbitrary_types_allowed = True
@@ -107,19 +111,28 @@ class HikingPipeline(BaseModel):
 
         # 1) hämta geometri från OSM
         if trail.geometry is None:
+            start = time.time()
             trail.__fetch_geometry__()
+            elapsed = time.time() - start
+            logger.info(f"Step 1: fetch geometry took {elapsed:.1f} seconds")
 
         # 2) hämta DEM tiles via orchestrator
+        start = time.time()
         bbox = list(trail.geometry.bounds)
         logger.debug(f"bbox: {bbox}")
         dem_tiles = self.orchestrator.get_dem_tiles_for_bbox(bbox)
+        elapsed = time.time() - start
+        logger.info(f"Step 2: fetch DEM tiles took {elapsed:.1f} seconds")
 
         if not dem_tiles:
             print(f"Inga DEM tiles hittades för {trail.wikidata_url}")
             return
 
         # 3) beräkna elevations, ascent/descent
+        start = time.time()
         trail.sample_elevations(dem_tiles)
+        elapsed = time.time() - start
+        logger.info(f"Step 3: sample elevations took {elapsed:.1f} seconds")
 
         # 4) beräkna stigning
         trail.compute_ascent_descent()
@@ -127,12 +140,31 @@ class HikingPipeline(BaseModel):
         # 5) spara resultat
         trail.save_to_csv()
 
+    def load_processed_qids(self):
+        """
+        Läser CSV-filen specificerad i config.csv_path
+        och laddar första kolumnen (QID) till self.processed_qids.
+        """
+        csv_path = config.csv_path
+        if not csv_path.exists():
+            print(f"CSV-fil finns inte: {csv_path}")
+            return
+
+        with csv_path.open(newline='', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if row:  # säkerställ att raden inte är tom
+                    self.processed_qids.add(row[0])
+
     # ------------------------------
     # Run pipeline
     # ------------------------------
     def run(self):
+        self.load_processed_qids()
         self.prepare_stac()
         self.get_and_parse_trails()
         for trail in self.trails:
-            if trail.ascent == 0.0 and trail.descent == 0.0:
+            if trail.wikidata_qid not in self.processed_qids:
                 self.process_trail(trail)
+            else:
+                print(f"Skipping already processed QID: {trail.wikidata_qid}")
