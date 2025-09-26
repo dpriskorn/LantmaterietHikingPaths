@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import List
 
+import rasterio
 import requests
 from pydantic import BaseModel
 from requests.auth import HTTPBasicAuth
@@ -104,13 +105,21 @@ class STACOrchestrator(BaseModel):
     @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=30))
     def download_dem_tile(url: str) -> Path:
         """
-        Download a DEM tile from Lantmäteriet with retries, caching, and size verification.
+        Download a DEM tile from Lantmäteriet with retries, caching, and validation.
+        Skips invalid or zero-size files.
         """
         local_file = SAVE_DIR / url.split("/")[-1]
 
         # Skip if already exists and non-zero
         if local_file.exists() and local_file.stat().st_size > 0:
-            return local_file
+            # Quick validation: check if it opens as a TIFF
+            try:
+                with rasterio.open(local_file) as src:
+                    src.read(1, window=((0, 1), (0, 1)))  # try reading a small block
+                return local_file
+            except Exception as e:
+                logger.warning(f"Existing DEM {local_file} is invalid, redownloading: {e}")
+                local_file.unlink(missing_ok=True)
 
         logger.info(f"Downloading {url} -> {local_file}")
         resp = requests.get(url, auth=HTTPBasicAuth(config.username, config.password), stream=True)
@@ -135,14 +144,12 @@ class STACOrchestrator(BaseModel):
             local_file.unlink(missing_ok=True)
             raise IOError(f"Incomplete download for {url}")
 
-        # Optionally, quick check if file is a valid TIFF
+        # Quick validation: ensure it opens as a TIFF
         try:
-            with open(local_file, "rb") as f:
-                header = f.read(4)
-                if header not in [b"II*\x00", b"MM\x00*"]:
-                    raise ValueError(f"{local_file} is not a valid TIFF file")
+            with rasterio.open(local_file) as src:
+                src.read(1, window=((0, 1), (0, 1)))  # test read
         except Exception as e:
-            logger.error(f"File validation failed for {local_file}: {e}")
+            logger.error(f"DEM validation failed for {local_file}: {e}")
             local_file.unlink(missing_ok=True)
             raise
 

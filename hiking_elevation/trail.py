@@ -26,7 +26,7 @@ class Trail(BaseModel):
     wikidata_qid: str = Field(..., description="Wikidata QID")
     osm_relation_id: int = Field(..., description="OpenStreetMap relation ID")
     geometry: LineString | None = Field(None, description="Trail geometry as LineString")
-    elevations: list[float] = Field(default_factory=list, description="Elevation samples along trail")
+    elevation_samples: list[float] = Field(default_factory=list, description="Elevation samples along trail")
     ascent: float = Field(0.0, description="Total ascent in meters")
     descent: float = Field(0.0, description="Total descent in meters")
     length: float = Field(0.0, description="Total length in km")
@@ -45,13 +45,13 @@ class Trail(BaseModel):
         Returns
         -------
         float
-            Sample distance in meters (1–25 m).
+            Sample distance in meters (1–10 m).
         """
         # Linear interpolation:
-        min_dist, max_dist = 1.0, 5.0
+        min_dist, max_dist = 1.0, 10.0
         min_len, max_len = 1.0, 50.0
         scale = (self.length - min_len) / (max_len - min_len)
-        return min_dist + scale * (max_dist - min_dist)
+        return round(min_dist + scale * (max_dist - min_dist))
 
     def sample_elevations(self, dem_paths: list[Path]):
         """
@@ -86,11 +86,15 @@ class Trail(BaseModel):
             val = None
             for src in srcs:
                 if src.bounds.left <= x <= src.bounds.right and src.bounds.bottom <= y <= src.bounds.top:
-                    row, col = src.index(x, y)
-                    val = float(src.read(1)[row, col])
+                    try:
+                        row, col = src.index(x, y)
+                        val = float(src.read(1)[row, col])
+                    except rasterio.errors.RasterioIOError as e:
+                        logger.warning(f"Failed to read DEM at ({x},{y}) from {src.name}: {e}")
+                        val = np.nan
                     break
             if val is None:
-                val = np.nan  # Use NaN to mark missing data
+                val = np.nan  # mark missing data
             elevations.append(val)
 
         # Close DEM files
@@ -104,15 +108,15 @@ class Trail(BaseModel):
             not_nans = ~nans
             elevations[nans] = np.interp(np.flatnonzero(nans), np.flatnonzero(not_nans), elevations[not_nans])
 
-        self.elevations = elevations.tolist()
+        self.elevation_samples = elevations.tolist()
 
     def compute_ascent_descent(self):
         logger.debug("_compute_ascent_descent: running")
-        diffs = np.diff(self.elevations)
+        diffs = np.diff(self.elevation_samples)
         self.ascent = float(diffs[diffs > 0].sum())
         self.descent = float(-diffs[diffs < 0].sum())
         print(
-            f"Sampled {len(self.elevations)} elevation points. "
+            f"Sampled {len(self.elevation_samples)} elevation points. "
             f"Ascent: {self.ascent:.1f} m, Descent: {self.descent:.1f} m")
 
     def __fetch_geometry__(self) -> None:
@@ -195,14 +199,14 @@ class Trail(BaseModel):
             writer = csv.writer(csvfile)
             # Write header if new file
             if is_new:
-                writer.writerow(["qid", "osm_id", "date", "ascent", "descent", "num_points", "point_spacing", "osm_length_km"])
+                writer.writerow(["qid", "osm_id", "date", "ascent", "descent", "samples", "sample_distance", "osm_length"])
             writer.writerow([
                 self.wikidata_qid,
                 self.osm_relation_id,
                 datetime.now().date().isoformat(),
                 round(self.ascent, 2),
                 round(self.descent, 2),
-                len(self.elevations),
+                len(self.elevation_samples),
                 self.interpolated_sample_distance,
                 self.si_length_in_osm
             ])
