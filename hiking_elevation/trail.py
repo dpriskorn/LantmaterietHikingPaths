@@ -30,6 +30,9 @@ class Trail(BaseModel):
     ascent: float = Field(0.0, description="Total ascent in meters")
     descent: float = Field(0.0, description="Total descent in meters")
     length: float = Field(0.0, description="Total length in km")
+    _projected_geometry: LineString | None = PrivateAttr(None)
+    _sample_coords: list[tuple[float, float]] = PrivateAttr(default_factory=list)
+    _dem_sources: list[rasterio.io.DatasetReader] = PrivateAttr(default_factory=list)
 
     # internt API-klient
     _api: overpy.Overpass = PrivateAttr(default_factory=overpy.Overpass)
@@ -53,38 +56,41 @@ class Trail(BaseModel):
         scale = (self.length - min_len) / (max_len - min_len)
         return round(min_dist + scale * (max_dist - min_dist))
 
-    def sample_elevations(self, dem_paths: list[Path]):
-        """
-        Sample elevations along the trail from DEM tiles.
-        Handles CRS transformation from WGS84 (OSM) to DEM CRS.
-        Calculates ascent and descent.
-        """
-        if self.geometry is None:
-            raise ValueError("Trail.geometry is None. Fetch geometry first.")
 
-        if not dem_paths:
-            raise ValueError("No DEM paths provided")
-
-        # Open first DEM to get CRS
-        with rasterio.open(dem_paths[0]) as src:
-            dem_crs = src.crs
-
-        # Transform trail geometry to DEM CRS
+    def _project_trail_to_dem(self, dem_crs) -> LineString:
+        """Project trail geometry to DEM CRS and store it."""
         project = pyproj.Transformer.from_crs("EPSG:4326", dem_crs, always_xy=True).transform
-        trail_proj = transform(project, self.geometry)
+        self._projected_geometry = transform(project, self.geometry)
+        return self._projected_geometry
 
-        # Interpolate points along the trail
-        n_points = max(int(trail_proj.length / self.interpolated_sample_distance), 2)
-        coords = [trail_proj.interpolate(i / (n_points - 1), normalized=True).coords[0]
-                  for i in range(n_points)]
+    def _generate_sample_coords(self, sample_distance: float) -> list[tuple[float, float]]:
+        """Generate interpolated coordinates along the projected trail."""
+        if self._projected_geometry is None:
+            raise ValueError("Trail geometry not projected yet.")
+        n_points = max(int(self._projected_geometry.length / sample_distance), 2)
+        self._sample_coords = [
+            self._projected_geometry.interpolate(i / (n_points - 1), normalized=True).coords[0]
+            for i in range(n_points)
+        ]
+        return self._sample_coords
 
-        # Open all DEMs
-        srcs = [rasterio.open(p) for p in dem_paths]
+    def _open_dem_files(self, dem_paths: list[Path]):
+        """Open DEM files and store references."""
+        self._dem_sources = [rasterio.open(p) for p in dem_paths]
+        return self._dem_sources
 
+    def _close_dem_files(self):
+        """Close opened DEM files."""
+        for src in self._dem_sources:
+            src.close()
+        self._dem_sources.clear()
+
+    def _sample_elevations_from_coords(self) -> np.ndarray:
+        """Sample elevations for coordinates using opened DEMs."""
         elevations = []
-        for x, y in coords:
-            val = None
-            for src in srcs:
+        for x, y in self._sample_coords:
+            val = np.nan
+            for src in self._dem_sources:
                 if src.bounds.left <= x <= src.bounds.right and src.bounds.bottom <= y <= src.bounds.top:
                     try:
                         row, col = src.index(x, y)
@@ -93,22 +99,48 @@ class Trail(BaseModel):
                         logger.warning(f"Failed to read DEM at ({x},{y}) from {src.name}: {e}")
                         val = np.nan
                     break
-            if val is None:
-                val = np.nan  # mark missing data
             elevations.append(val)
+        return np.array(elevations)
 
-        # Close DEM files
-        for src in srcs:
-            src.close()
+    def sample_elevations(self, dem_paths: list[Path]):
+        """Main method to sample elevations along the trail."""
+        if self.geometry is None:
+            raise ValueError("Trail.geometry is None. Fetch geometry first.")
+        if not dem_paths:
+            raise ValueError("No DEM paths provided")
 
-        # Replace missing values with linear interpolation if possible
-        elevations = np.array(elevations)
-        if np.any(np.isnan(elevations)):
+        # 1) Project trail to DEM CRS
+        with rasterio.open(dem_paths[0]) as src:
+            dem_crs = src.crs
+        self._project_trail_to_dem(dem_crs)
+
+        # 2) Generate sample coordinates
+        self._generate_sample_coords(self.interpolated_sample_distance)
+
+        # 3) Open DEM files
+        self._open_dem_files(dem_paths)
+
+        try:
+            # 4) Sample elevations
+            elevations = self._sample_elevations_from_coords()
+
+            # 5) Handle missing values
             nans = np.isnan(elevations)
             not_nans = ~nans
-            elevations[nans] = np.interp(np.flatnonzero(nans), np.flatnonzero(not_nans), elevations[not_nans])
+            if np.any(nans):
+                if np.any(not_nans):
+                    elevations[nans] = np.interp(np.flatnonzero(nans), np.flatnonzero(not_nans),
+                                                 elevations[not_nans])
+                else:
+                    logger.warning(
+                        f"All elevation samples are missing for trail {self.wikidata_qid}. Filling with zeros.")
+                    elevations[:] = 0
 
-        self.elevation_samples = elevations.tolist()
+            self.elevation_samples = elevations.tolist()
+
+        finally:
+            # 6) Close DEM files
+            self._close_dem_files()
 
     def compute_ascent_descent(self):
         logger.debug("_compute_ascent_descent: running")
