@@ -1,3 +1,4 @@
+import csv
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -10,9 +11,8 @@ from pydantic import BaseModel, Field, PrivateAttr
 from shapely.geometry import LineString, MultiLineString
 from shapely.ops import linemerge
 from shapely.ops import transform
-from wikibaseintegrator import WikibaseIntegrator
-from wikibaseintegrator.datatypes import Item, Quantity
-from wikibaseintegrator.models import Reference, Claim
+
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,23 @@ class Trail(BaseModel):
     # config
     model_config = {"arbitrary_types_allowed": True}
 
-    def sample_elevations(self, dem_paths: list[Path], sample_distance: float = 5.0):
+    @property
+    def interpolated_sample_distance(self) -> float:
+        """
+        Choose a reasonable sampling distance (in meters) based on trail length.
+
+        Returns
+        -------
+        float
+            Sample distance in meters (1–25 m).
+        """
+        # Linear interpolation:
+        min_dist, max_dist = 1.0, 5.0
+        min_len, max_len = 1.0, 50.0
+        scale = (self.length - min_len) / (max_len - min_len)
+        return min_dist + scale * (max_dist - min_dist)
+
+    def sample_elevations(self, dem_paths: list[Path]):
         """
         Sample elevations along the trail from DEM tiles.
         Handles CRS transformation from WGS84 (OSM) to DEM CRS.
@@ -58,7 +74,7 @@ class Trail(BaseModel):
         trail_proj = transform(project, self.geometry)
 
         # Interpolate points along the trail
-        n_points = max(int(trail_proj.length / sample_distance), 2)
+        n_points = max(int(trail_proj.length / self.interpolated_sample_distance), 2)
         coords = [trail_proj.interpolate(i / (n_points - 1), normalized=True).coords[0]
                   for i in range(n_points)]
 
@@ -90,11 +106,7 @@ class Trail(BaseModel):
 
         self.elevations = elevations.tolist()
 
-        # Compute ascent/descent
-        self._compute_ascent_descent()
-
-    # Privat metod för ascent/descent
-    def _compute_ascent_descent(self):
+    def compute_ascent_descent(self):
         logger.debug("_compute_ascent_descent: running")
         diffs = np.diff(self.elevations)
         self.ascent = float(diffs[diffs > 0].sum())
@@ -103,7 +115,7 @@ class Trail(BaseModel):
             f"Sampled {len(self.elevations)} elevation points. "
             f"Ascent: {self.ascent:.1f} m, Descent: {self.descent:.1f} m")
 
-    def fetch_geometry(self) -> None:
+    def __fetch_geometry__(self) -> None:
         """
         Hämta geometrin från OSM via relation ID och uppdatera Trail.geometry.
         """
@@ -145,50 +157,52 @@ class Trail(BaseModel):
             raise ValueError("Kan inte skapa LineString från geometri")
 
     @property
+    def si_length_in_osm(self) -> float:
+        """
+        Beräkna längden på sträckan i meter baserat på self.geometry.
+        Kräver att self.geometry är en LineString.
+        """
+        if self.geometry is None:
+            raise ValueError("Geometry är inte satt. Kör fetch_geometry först.")
+
+        # Transformer från WGS84 (lat/lon) till ett projicerat koordinatsystem (t.ex. UTM).
+        # Använder automatisk projicering beroende på geometriens centroid.
+        proj = pyproj.Transformer.from_crs(
+            "EPSG:4326",  # WGS84
+            pyproj.CRS.from_proj4(
+                f"+proj=utm +zone={int((self.geometry.centroid.x + 180) // 6) + 1} "
+                f"{'+south' if self.geometry.centroid.y < 0 else ''} +datum=WGS84 +units=m +no_defs"
+            ),
+            always_xy=True
+        ).transform
+
+        projected = transform(proj, self.geometry)
+        return round(projected.length)
+
+    @property
     def wikidata_url(self):
         return f"https://www.wikidata.org/wiki/{self.wikidata_qid}"
 
-    def add_quantity_claim_with_qualifiers(self, property_id, value, unit_qid):
-        # Qualifiers
-        determination_method_qid = "Q43229"  # digital elevation model
-        point_spacing_m = 5
-        number_of_points = len(self.elevations)
-        calculation_date = datetime.date(datetime.now()).isoformat()
+    def save_to_csv(self, path: Path = config.csv_path) -> None:
+        """
+        Save trail stats to a CSV file with columns:
+        Appends to the file if it exists.
+        """
+        path = Path(path)
+        is_new = not path.exists()
 
-        # Reference
-        source_item_qid = "Q136346193"
-        retrieved_date = datetime.date(datetime.now()).isoformat()
-        # todo
-        claim = Claim(property=property_id, value=wbi_functions.Quantity(amount=value, unit=unit_qid))
-
-        # Add qualifiers
-        # Determination method
-        claim.add_qualifier(qual_property="P459", value=Item(determination_method_qid))
-        # Point spacing
-        claim.add_qualifier(qual_property="P2283", value=Quantity(amount=point_spacing_m, unit="Q11573"))
-        # Number of observations
-        claim.add_qualifier(qual_property="P4597", value=number_of_points)
-        # Date of determination
-        claim.add_qualifier(qual_property="P585", value=calculation_date)
-
-        # Add reference
-        reference = Reference()
-        reference.add_value(prop="P248", value=Item(source_item_qid))  # stated in
-        reference.add_value(prop="P813", value=retrieved_date)  # retrieved
-        claim.add_reference(reference)
-
-        # Add claim to item
-        item.add_claim(claim)
-
-        # Load the trail item
-        wbi = WikibaseIntegrator()
-        trail_item = wbi.item(trail_qid)
-
-        # Add ascent
-        add_quantity_claim_with_qualifiers(trail_item, property_id="P1038", value=ascent_m, unit_qid="Q11573")
-
-        # Add descent
-        add_quantity_claim_with_qualifiers(trail_item, property_id="P2044", value=descent_m, unit_qid="Q11573")
-
-        # Write back to Wikidata
-        trail_item.write()
+        with path.open("a", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            # Write header if new file
+            if is_new:
+                writer.writerow(["qid", "osm_id", "date", "ascent", "descent", "num_points", "point_spacing", "osm_length_km"])
+            writer.writerow([
+                self.wikidata_qid,
+                self.osm_relation_id,
+                datetime.now().date().isoformat(),
+                round(self.ascent, 2),
+                round(self.descent, 2),
+                len(self.elevations),
+                self.interpolated_sample_distance,
+                self.si_length_in_osm
+            ])

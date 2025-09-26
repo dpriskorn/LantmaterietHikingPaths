@@ -22,7 +22,7 @@ class HikingPipeline(BaseModel):
        a) hämta geometri
        b) hämta DEM tiles
        c) beräkna ascent/descent
-       d) ladda upp resultat
+       d) spara resultat
     """
     trails: list[Trail] = []
     dem_dir: Path = Path("data/dem")
@@ -69,8 +69,8 @@ class HikingPipeline(BaseModel):
                     wdt:P402 ?osm;
                     wdt:P2043 ?length.
               MINUS {{ ?item wdt:P31 wd:Q116787033 }}
-              # filter for length between 5 and 10 km
-              FILTER(?length > 10 && ?length < 25)              
+              # filter for length between 5 and 50 km
+              FILTER(?length > 5 && ?length < 50)              
             }}
             ORDER BY ASC(?length)
             """
@@ -102,12 +102,12 @@ class HikingPipeline(BaseModel):
     # ------------------------------
     # Process a single trail
     # ------------------------------
-    def process_trail(self, trail: Trail, sample_distance: float = 25.0):
+    def process_trail(self, trail: Trail):
         print(f"Processing trail ({trail.wikidata_qid}, {trail.length} km, {trail.wikidata_url})...")
 
         # 1) hämta geometri från OSM
         if trail.geometry is None:
-            trail.fetch_geometry()
+            trail.__fetch_geometry__()
 
         # 2) hämta DEM tiles via orchestrator
         bbox = list(trail.geometry.bounds)
@@ -119,19 +119,20 @@ class HikingPipeline(BaseModel):
             return
 
         # 3) beräkna elevations, ascent/descent
-        trail.sample_elevations(dem_tiles, sample_distance)
+        trail.sample_elevations(dem_tiles)
 
-        # 4) ladda upp resultat till Wikidata
-        # self.upload_to_wikidata(trail)
+        # 4) beräkna stigning
+        trail.compute_ascent_descent()
 
-        # print(f"Done: Ascent={trail.ascent:.1f} m, Descent={trail.descent:.1f} m")
+        # 5) spara resultat
+        trail.save_to_csv()
 
     # ------------------------------
     # Run pipeline
     # ------------------------------
-    def run(self, sample_distance: float = 25.0):
+    def run(self):
         self.prepare_stac()
         self.get_and_parse_trails()
         for trail in self.trails:
             if trail.ascent == 0.0 and trail.descent == 0.0:
-                self.process_trail(trail, sample_distance)
+                self.process_trail(trail)
