@@ -4,25 +4,19 @@ This pipeline fetches Swedish trails from Wikidata
 and based on their geometry downloads the DEM data from
 lantmäteriet to calculate ascent and descent along the route.
 
-```
-hiking_elevation/
-├── pyproject.toml           # poetry-konfiguration
-├── README.md
-├── poetry.lock
-├── hiking_elevation/
-│   ├── __init__.py
-│   ├── config.py            # API-nycklar, paths
-│   ├── models.py            # Pydantic-modeller
-│   ├── wikidata.py          # hämta OSM-länk från Wikidata
-│   ├── osm.py               # hämta geometri via Overpass
-│   ├── dem.py               # hämta höjddata via STAC
-│   ├── profile.py           # beräkna ascent/descent
-│   └── main.py              # orchestrator
-├── data/                    # temporär lagring av DEM
-└── tests/
-    └── test_profile.py
-```
+It excludes all trails longer than 50 km.
 
+
+- **Qualifiers:**
+  - *Determination method* (`P459`) → e.g., "digital elevation model" (`Q43229`)
+  - *Point spacing* (`P2283`) → e.g., `5 m` (`Q11573`)
+  - *Number of observations* (`P4597`) → number of elevation points
+  - *Date of determination* (`P585`) → calculation date in ISO format
+
+- **Reference:**
+  - *Stated in* (`P248`) → e.g., High quality DEM dataset from Lantmäteriet (`Q136346193`)
+  - *Retrieved* (`P813`) → retrieval date in ISO format
+  
 ## Topografi 50 extraction 
 Script to extract, filter and convert hiking paths from the 
 product Topografi 50 from swedish state Lantmäteriet to WSG84 
