@@ -28,14 +28,15 @@ class Trail(BaseModel):
     osm_relation_id: int = Field(..., description="OpenStreetMap relation ID")
     geometry: LineString | None = Field(None, description="Trail geometry as LineString")
     elevation_samples: list[float] = Field(default_factory=list, description="Elevation samples along trail")
-    ascent: float = Field(0.0, description="Total ascent in meters")
-    descent: float = Field(0.0, description="Total descent in meters")
-    length: float = Field(0.0, description="Total length in km")
+    ascent: float = Field(description="Total ascent in meters",default_factory=list)
+    descent: float = Field(description="Total descent in meters", default_factory=list)
+    length: float = Field(description="Total length in km", default_factory=list)
     _projected_geometry: LineString | None = PrivateAttr(None)
     _sample_coords: list[tuple[float, float]] = PrivateAttr(default_factory=list)
     _dem_sources: list[rasterio.io.DatasetReader] = PrivateAttr(default_factory=list)
     _first_point: tuple[float, float] = PrivateAttr(default_factory=float)
     _last_point: tuple[float, float] = PrivateAttr(default_factory=float)
+    _roundtrip: bool = PrivateAttr(default=False)
 
     # internt API-klient
     _api: overpy.Overpass = PrivateAttr(default_factory=overpy.Overpass)
@@ -234,7 +235,7 @@ class Trail(BaseModel):
     def _compute_direction(self) -> str | None:
         """
         Compute cardinal direction from first_point → last_point.
-        Returns one of [N, NE, E, SE, S, SW, W, NW] or None if same point.
+        Returns one of [N, NE, E, SE, S, SW, W, NW] or None if it's a roundtrip.
         """
         if not self._first_point or not self._last_point:
             return None
@@ -242,13 +243,21 @@ class Trail(BaseModel):
         lon1, lat1 = self._first_point
         lon2, lat2 = self._last_point
 
-        # roundtrip check
-        if math.isclose(lat1, lat2, abs_tol=1e-5) and math.isclose(lon1, lon2, abs_tol=1e-5):
+        # Distance between start and end in meters
+        geod = pyproj.Geod(ellps="WGS84")
+        _, _, dist = geod.inv(lon1, lat1, lon2, lat2)
+
+        # Ratio test: how big is net displacement compared to full trail length?
+        ratio = dist / self.si_length_in_osm if self.si_length_in_osm > 0 else 1.0
+
+        # Heuristic: roundtrip if displacement < 10% of length OR < 500 m
+        if dist < 500 or ratio < 0.1:
+            self._roundtrip = True
             return None
 
+        # Otherwise compute direction
         dlon = lon2 - lon1
         dlat = lat2 - lat1
-
         angle = math.degrees(math.atan2(dlon, dlat))  # atan2(x, y) → bearing
         bearing = (angle + 360) % 360
 
@@ -278,7 +287,7 @@ class Trail(BaseModel):
                     "qid", "osm_id", "date",
                     "ascent", "descent", "samples", "sample_distance", "osm_length",
                     "first_lat", "first_lon", "last_lat", "last_lon",
-                    "direction"
+                    "direction", "roundtrip"
                 ])
             writer.writerow([
                 self.wikidata_qid,
@@ -293,5 +302,6 @@ class Trail(BaseModel):
                 self._first_point[0] if self._first_point else None,  # lon
                 self._last_point[1] if self._last_point else None,  # lat
                 self._last_point[0] if self._last_point else None,  # lon
-                direction
+                direction,
+                self._roundtrip
             ])
