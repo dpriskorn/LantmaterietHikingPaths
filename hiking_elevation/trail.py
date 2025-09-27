@@ -1,5 +1,6 @@
 import csv
 import logging
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -33,6 +34,8 @@ class Trail(BaseModel):
     _projected_geometry: LineString | None = PrivateAttr(None)
     _sample_coords: list[tuple[float, float]] = PrivateAttr(default_factory=list)
     _dem_sources: list[rasterio.io.DatasetReader] = PrivateAttr(default_factory=list)
+    _first_point: tuple[float, float] = PrivateAttr(default_factory=float)
+    _last_point: tuple[float, float] = PrivateAttr(default_factory=float)
 
     # internt API-klient
     _api: overpy.Overpass = PrivateAttr(default_factory=overpy.Overpass)
@@ -55,7 +58,6 @@ class Trail(BaseModel):
         min_len, max_len = 1.0, 50.0
         scale = (self.length - min_len) / (max_len - min_len)
         return round(min_dist + scale * (max_dist - min_dist))
-
 
     def _project_trail_to_dem(self, dem_crs) -> LineString:
         """Project trail geometry to DEM CRS and store it."""
@@ -151,7 +153,7 @@ class Trail(BaseModel):
             f"Sampled {len(self.elevation_samples)} elevation points. "
             f"Ascent: {self.ascent:.1f} m, Descent: {self.descent:.1f} m")
 
-    def __fetch_geometry__(self) -> None:
+    def fetch_geometry(self) -> None:
         """
         Hämta geometrin från OSM via relation ID och uppdatera Trail.geometry.
         """
@@ -219,6 +221,41 @@ class Trail(BaseModel):
     def wikidata_url(self):
         return f"https://www.wikidata.org/wiki/{self.wikidata_qid}"
 
+    def _update_first_last_points(self) -> None:
+        """Update first and last coordinate tuples (lon, lat) from geometry."""
+        if self.geometry is None:
+            raise ValueError("Geometry is not set. Run fetch_geometry first.")
+        coords = list(self.geometry.coords)
+        if not coords:
+            raise ValueError("Geometry has no coordinates")
+        self._first_point = coords[0]  # (lon, lat)
+        self._last_point = coords[-1]  # (lon, lat)
+
+    def _compute_direction(self) -> str | None:
+        """
+        Compute cardinal direction from first_point → last_point.
+        Returns one of [N, NE, E, SE, S, SW, W, NW] or None if same point.
+        """
+        if not self._first_point or not self._last_point:
+            return None
+
+        lon1, lat1 = self._first_point
+        lon2, lat2 = self._last_point
+
+        # roundtrip check
+        if math.isclose(lat1, lat2, abs_tol=1e-5) and math.isclose(lon1, lon2, abs_tol=1e-5):
+            return None
+
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+
+        angle = math.degrees(math.atan2(dlon, dlat))  # atan2(x, y) → bearing
+        bearing = (angle + 360) % 360
+
+        directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        idx = round(bearing / 45) % 8
+        return directions[idx]
+
     def save_to_csv(self, path: Path = config.csv_path) -> None:
         """
         Save trail stats to a CSV file with columns:
@@ -227,11 +264,22 @@ class Trail(BaseModel):
         path = Path(path)
         is_new = not path.exists()
 
+        # Ensure first/last points are updated before saving
+        if self.geometry is not None:
+            self._update_first_last_points()
+
+        direction = self._compute_direction()
+
         with path.open("a", newline="") as csvfile:
             writer = csv.writer(csvfile)
             # Write header if new file
             if is_new:
-                writer.writerow(["qid", "osm_id", "date", "ascent", "descent", "samples", "sample_distance", "osm_length"])
+                writer.writerow([
+                    "qid", "osm_id", "date",
+                    "ascent", "descent", "samples", "sample_distance", "osm_length",
+                    "first_lat", "first_lon", "last_lat", "last_lon",
+                    "direction"
+                ])
             writer.writerow([
                 self.wikidata_qid,
                 self.osm_relation_id,
@@ -240,5 +288,10 @@ class Trail(BaseModel):
                 round(self.descent, 2),
                 len(self.elevation_samples),
                 self.interpolated_sample_distance,
-                self.si_length_in_osm
+                self.si_length_in_osm,
+                self._first_point[1] if self._first_point else None,  # lat
+                self._first_point[0] if self._first_point else None,  # lon
+                self._last_point[1] if self._last_point else None,  # lat
+                self._last_point[0] if self._last_point else None,  # lon
+                direction
             ])

@@ -112,7 +112,7 @@ class HikingPipeline(BaseModel):
         # 1) hämta geometri från OSM
         if trail.geometry is None:
             start = time.time()
-            trail.__fetch_geometry__()
+            trail.fetch_geometry()
             elapsed = time.time() - start
             logger.info(f"Step 1: fetch geometry took {elapsed:.1f} seconds")
 

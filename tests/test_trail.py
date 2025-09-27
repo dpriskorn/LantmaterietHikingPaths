@@ -15,7 +15,7 @@ def test_fetch_geometry(wikidata_qid, osm_relation_id):
     trail = Trail(wikidata_qid=wikidata_qid, osm_relation_id=osm_relation_id)
 
     # Fetch geometry from OSM
-    trail.__fetch_geometry__()
+    trail.fetch_geometry()
 
     # Check that geometry is a LineString and has coordinates
     assert isinstance(trail.geometry, LineString)
@@ -35,7 +35,7 @@ def test_trail_pipeline(wikidata_qid, osm_relation_id):
     # -------------------------
     # Step 1: Fetch geometry
     # -------------------------
-    trail.__fetch_geometry__()
+    trail.fetch_geometry()
     geometry = trail.geometry
     assert geometry.length > 0
 
