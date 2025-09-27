@@ -116,29 +116,30 @@ class HikingPipeline(BaseModel):
             elapsed = time.time() - start
             logger.info(f"Step 1: fetch geometry took {elapsed:.1f} seconds")
 
-        # 2) hämta DEM tiles via orchestrator
-        start = time.time()
-        bbox = list(trail.geometry.bounds)
-        logger.debug(f"bbox: {bbox}")
-        dem_tiles = self.orchestrator.get_dem_tiles_for_bbox(bbox)
-        elapsed = time.time() - start
-        logger.info(f"Step 2: fetch DEM tiles took {elapsed:.1f} seconds")
+        if trail.geometry is not None:
+            # 2) hämta DEM tiles via orchestrator
+            start = time.time()
+            bbox = list(trail.geometry.bounds)
+            logger.debug(f"bbox: {bbox}")
+            dem_tiles = self.orchestrator.get_dem_tiles_for_bbox(bbox)
+            elapsed = time.time() - start
+            logger.info(f"Step 2: fetch DEM tiles took {elapsed:.1f} seconds")
 
-        if not dem_tiles:
-            print(f"Inga DEM tiles hittades för {trail.wikidata_url}")
-            return
+            if not dem_tiles:
+                print(f"Inga DEM tiles hittades för {trail.wikidata_url}")
+                return
 
-        # 3) beräkna elevations, ascent/descent
-        start = time.time()
-        trail.sample_elevations(dem_tiles)
-        elapsed = time.time() - start
-        logger.info(f"Step 3: sample elevations took {elapsed:.1f} seconds")
+            # 3) beräkna elevations, ascent/descent
+            start = time.time()
+            trail.sample_elevations(dem_tiles)
+            elapsed = time.time() - start
+            logger.info(f"Step 3: sample elevations took {elapsed:.1f} seconds")
 
-        # 4) beräkna stigning
-        trail.compute_ascent_descent()
+            # 4) beräkna stigning
+            trail.compute_ascent_descent()
 
-        # 5) spara resultat
-        trail.save_to_csv()
+            # 5) spara resultat
+            trail.save_to_csv()
 
     def load_processed_qids(self):
         """

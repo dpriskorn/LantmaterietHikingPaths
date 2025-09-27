@@ -39,7 +39,7 @@ class Trail(BaseModel):
     _roundtrip: bool = PrivateAttr(default=False)
 
     # internt API-klient
-    _api: overpy.Overpass = PrivateAttr(default_factory=overpy.Overpass)
+    _api: overpy.Overpass = overpy.Overpass(max_retry_count=10, retry_timeout=60)
 
     # config
     model_config = {"arbitrary_types_allowed": True}
@@ -193,7 +193,7 @@ class Trail(BaseModel):
                     seen.add(c)
             self.geometry = LineString(dedup_coords)
         else:
-            raise ValueError("Kan inte skapa LineString från geometri")
+            logger.error(f"Kan inte skapa LineString från geometri för {self.osm_relation_id} so skipping this.")
 
     @property
     def si_length_in_osm(self) -> float:
