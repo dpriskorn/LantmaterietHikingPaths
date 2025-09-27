@@ -265,7 +265,7 @@ class Trail(BaseModel):
         idx = round(bearing / 45) % 8
         return directions[idx]
 
-    def save_to_csv(self, path: Path = config.csv_path) -> None:
+    def save_to_csv(self, path: Path = config.output_csv_path) -> None:
         """
         Save trail stats to a CSV file with columns:
         Appends to the file if it exists.

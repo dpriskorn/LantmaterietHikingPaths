@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from typing import Set
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from wikibaseintegrator import wbi_config  # type: ignore
 from wikibaseintegrator.wbi_helpers import execute_sparql_query
 
@@ -27,12 +27,13 @@ class HikingPipeline(BaseModel):
        c) beräkna ascent/descent
        d) spara resultat
     """
-    trails: list[Trail] = []
+    trails: list[Trail] = Field(default_factory=list)
+    processed_qids: Set[str] = Field(default_factory=set)
+    no_tiles_qids: Set[str] = Field(default_factory=set)
     dem_dir: Path = Path("data/dem")
     orchestrator: STACOrchestrator | None = None
-    sparql_result: dict = dict()
+    sparql_result: dict = Field(default_factory=dict)
     rdf_entity_prefix: str = "http://www.wikidata.org/entity/"
-    processed_qids: Set[str] = set()
 
     class Config:
         arbitrary_types_allowed = True
@@ -61,10 +62,6 @@ class HikingPipeline(BaseModel):
         """Get all hiking trails and subtrails in the specified country and
         with labels in the specified language"""
         logger.debug("prepare_stac: running")
-        # minus discontinued hiking paths
-        # only swedish paths
-        # only those with osm id
-        # only those with length and start with the shortest
         self.sparql_result = execute_sparql_query(
             f"""
             SELECT DISTINCT ?item ?osm ?length WHERE {{
@@ -73,7 +70,6 @@ class HikingPipeline(BaseModel):
                     wdt:P402 ?osm;
                     wdt:P2043 ?length.
               MINUS {{ ?item wdt:P31 wd:Q116787033 }}
-              # filter for length between 5 and 50 km
               FILTER(?length > 5 && ?length < 50)              
             }}
             ORDER BY ASC(?length)
@@ -91,15 +87,12 @@ class HikingPipeline(BaseModel):
         """Create TrailItem objects from SPARQL results including last_update"""
         if self.sparql_result:
             for binding in self.sparql_result["results"]["bindings"]:
-                # pprint(binding)
                 qid = self.__extract_wcdqs_json_entity_id__(data=binding)
                 osm_relation_id = binding.get("osm", {}).get("value")
                 logger.debug(f"got osm relation id: {osm_relation_id}")
                 length = binding.get("length", {}).get("value")
                 logger.debug(f"got length: {length} km")
                 trail_item = Trail(wikidata_qid=qid, osm_relation_id=osm_relation_id, length=length)
-                # pprint(trail_item)
-                # input("press enter to cont")
                 self.trails.append(trail_item)
         print(f"Got {len(self.trails)} trails from WDQS")
 
@@ -127,6 +120,8 @@ class HikingPipeline(BaseModel):
 
             if not dem_tiles:
                 print(f"Inga DEM tiles hittades för {trail.wikidata_url}")
+                self.no_tiles_qids.add(trail.wikidata_qid)
+                self.append_no_tiles_qid(trail.wikidata_qid)
                 return
 
             # 3) beräkna elevations, ascent/descent
@@ -143,10 +138,10 @@ class HikingPipeline(BaseModel):
 
     def load_processed_qids(self):
         """
-        Läser CSV-filen specificerad i config.csv_path
+        Läser CSV-filen specificerad i config.output_csv_path
         och laddar första kolumnen (QID) till self.processed_qids.
         """
-        csv_path = config.csv_path
+        csv_path = config.output_csv_path
         if not csv_path.exists():
             print(f"CSV-fil finns inte: {csv_path}")
             return
@@ -154,18 +149,48 @@ class HikingPipeline(BaseModel):
         with csv_path.open(newline='', encoding='utf-8') as f:
             reader = csv.reader(f)
             for row in reader:
-                if row:  # säkerställ att raden inte är tom
+                if row:
                     self.processed_qids.add(row[0])
+
+    def load_no_tiles_qids(self):
+        """
+        Läser CSV-filen specificerad i config.no_tiles_csv_path
+        och laddar första kolumnen (QID) till self.no_tiles_qids.
+        """
+        csv_path = config.no_tiles_csv_path
+        if not csv_path.exists():
+            logger.info(f"No-tiles CSV not found: {csv_path}")
+            return
+
+        with csv_path.open(newline='', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if row:
+                    self.no_tiles_qids.add(row[0])
+
+    def append_no_tiles_qid(self, qid: str):
+        """
+        Lägger till en QID i no_tiles_csv_path om den inte redan finns.
+        """
+        csv_path = config.no_tiles_csv_path
+        with csv_path.open("a", newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([qid])
+        logger.info(f"Appended {qid} to {csv_path}")
 
     # ------------------------------
     # Run pipeline
     # ------------------------------
     def run(self):
         self.load_processed_qids()
+        self.load_no_tiles_qids()
         self.prepare_stac()
         self.get_and_parse_trails()
         for trail in self.trails:
-            if trail.wikidata_qid not in self.processed_qids:
+            if trail.wikidata_qid not in (self.processed_qids or self.no_tiles_qids):
                 self.process_trail(trail)
             else:
-                print(f"Skipping already processed QID: {trail.wikidata_qid}")
+                if trail.wikidata_qid in self.processed_qids:
+                    print(f"Skipping already processed QID: {trail.wikidata_qid}")
+                if trail.wikidata_qid in self.no_tiles_qids:
+                    print(f"Skipping no tiles QID: {trail.wikidata_qid}")
