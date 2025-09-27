@@ -77,7 +77,7 @@ class HikingPipeline(BaseModel):
         )
 
     def __extract_wcdqs_json_entity_id__(
-        self, data: dict, sparql_variable: str = "item"
+            self, data: dict, sparql_variable: str = "item"
     ) -> str:
         """We default to "item" as sparql value because
         it is customary in the Wikibase ecosystem"""
@@ -100,8 +100,6 @@ class HikingPipeline(BaseModel):
     # Process a single trail
     # ------------------------------
     def process_trail(self, trail: Trail):
-        print(f"Processing trail ({trail.wikidata_qid}, {trail.length} km, {trail.wikidata_url})...")
-
         # 1) hämta geometri från OSM
         if trail.geometry is None:
             start = time.time()
@@ -120,7 +118,6 @@ class HikingPipeline(BaseModel):
 
             if not dem_tiles:
                 print(f"Inga DEM tiles hittades för {trail.wikidata_url}")
-                self.no_tiles_qids.add(trail.wikidata_qid)
                 self.append_no_tiles_qid(trail.wikidata_qid)
                 return
 
@@ -173,10 +170,11 @@ class HikingPipeline(BaseModel):
         Lägger till en QID i no_tiles_csv_path om den inte redan finns.
         """
         csv_path = config.no_tiles_csv_path
-        with csv_path.open("a", newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow([qid])
-        logger.info(f"Appended {qid} to {csv_path}")
+        if qid not in self.no_tiles_qids:
+            with csv_path.open("a", newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([qid])
+            logger.info(f"Appended {qid} to {csv_path}")
 
     # ------------------------------
     # Run pipeline
@@ -186,11 +184,16 @@ class HikingPipeline(BaseModel):
         self.load_no_tiles_qids()
         self.prepare_stac()
         self.get_and_parse_trails()
+        count = 1
+        excluded_trails = self.processed_qids.union(self.no_tiles_qids)
         for trail in self.trails:
-            if trail.wikidata_qid not in (self.processed_qids or self.no_tiles_qids):
+            if trail.wikidata_qid not in excluded_trails:
+                print(f"Processing trail ({count}/{len(self.trails)}) "
+                      f"({trail.wikidata_qid}, {trail.length} km, {trail.wikidata_url})...")
                 self.process_trail(trail)
             else:
                 if trail.wikidata_qid in self.processed_qids:
                     print(f"Skipping already processed QID: {trail.wikidata_qid}")
                 if trail.wikidata_qid in self.no_tiles_qids:
                     print(f"Skipping no tiles QID: {trail.wikidata_qid}")
+            count += 1
