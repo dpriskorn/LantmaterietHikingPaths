@@ -16,6 +16,9 @@ It excludes all trails longer than 50 km.
 - **Reference:**
   - *Stated in* (`P248`) → e.g., High quality DEM dataset from Lantmäteriet (`Q136346193`)
   - *Retrieved* (`P813`) → retrieval date in ISO format
+
+Since OSM data is used in this pipeline the result can only be released under ODblv2 license. 
+It is thus not suitable for upload to Wikidata.
   
 ## Topografi 50 extraction 
 Script to extract, filter and convert hiking paths from the 
