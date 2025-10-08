@@ -1,5 +1,6 @@
 import csv
 import logging
+import shutil
 import time
 from pathlib import Path
 from typing import Set
@@ -176,6 +177,14 @@ class HikingPipeline(BaseModel):
                 writer.writerow([qid])
             logger.info(f"Appended {qid} to {csv_path}")
 
+    @property
+    def is_low_disk_space(self) -> bool:
+        """Return True if free space on disk < 1 GB, else False."""
+        usage = shutil.disk_usage(".")
+        free_gb = round(usage.free / (1024 ** 3))
+        logger.info(f"Free GB: {free_gb}")
+        return free_gb < 1
+
     # ------------------------------
     # Run pipeline
     # ------------------------------
@@ -187,6 +196,8 @@ class HikingPipeline(BaseModel):
         count = 1
         excluded_trails = self.processed_qids.union(self.no_tiles_qids)
         for trail in self.trails:
+            if self.is_low_disk_space:
+                raise Exception("low disk space")
             if trail.wikidata_qid not in excluded_trails:
                 print(f"Processing trail ({count}/{len(self.trails)}) "
                       f"({trail.wikidata_qid}, {trail.length} km, {trail.wikidata_url})...")
